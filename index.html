@@ -167,6 +167,27 @@ input[type=date]{appearance:none;-webkit-appearance:none}
 .grafico .med{stroke:var(--ouro);stroke-width:1.5;stroke-dasharray:5 5}
 .grafico .vl{fill:var(--ink);font-weight:700}
 .nota{font-size:14px;color:var(--muted)}
+.bloco-nota{display:block;margin-top:6px}
+.medio{color:var(--ouro);font-weight:700}
+.sec{margin:26px 0 6px}
+.sec h3{margin:0 0 10px;font-family:var(--f-digits);font-stretch:condensed;font-weight:500;font-size:23px;letter-spacing:.01em}
+.kpis.tres{grid-template-columns:repeat(3,1fr)}
+.kpis.tres .v{font-size:30px}
+.bar-obj{height:10px;border-radius:99px;background:var(--linha);overflow:hidden;margin:2px 0 6px}
+.bar-obj i{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--paprika),var(--brasa))}
+.bar-obj i.ok{background:linear-gradient(90deg,var(--ok),var(--ouro))}
+.rank{list-style:none;margin:0;padding:14px 16px;background:var(--glass);border:1px solid var(--linha);border-radius:20px;display:grid;gap:14px;-webkit-backdrop-filter:blur(16px);backdrop-filter:blur(16px)}
+.rank li{display:grid;grid-template-columns:1fr auto;gap:6px 10px;align-items:end}
+.rank .nome{font-weight:600;min-width:0}
+.rank .nome small{display:block;color:var(--muted);font-weight:400;font-size:13px}
+.rank .val{font-family:var(--f-digits);font-stretch:condensed;font-weight:300;font-variant-numeric:tabular-nums;font-size:26px;line-height:1;white-space:nowrap}
+.rank .val small{font-size:.5em;color:var(--muted)}
+.rank .bar{grid-column:1/-1;height:8px;border-radius:99px;background:var(--linha);overflow:hidden}
+.rank .bar i{display:block;height:100%;border-radius:inherit;background:var(--muted);opacity:.45}
+.rank li.atual .nome{color:var(--brasa)}
+.rank li.atual .bar i{opacity:1;background:linear-gradient(90deg,var(--paprika),var(--ouro));box-shadow:0 0 12px rgba(255,120,50,var(--brilho))}
+.grafico .objl{stroke:var(--ok);stroke-width:1.5;stroke-dasharray:2 4}
+.grafico .objt{fill:var(--ok);font-weight:700}
 .tabela{overflow-x:auto;background:var(--glass);border:1px solid var(--linha);border-radius:20px}
 table{border-collapse:collapse;width:100%;font-size:14px;white-space:nowrap}
 th,td{padding:10px 14px;text-align:left;border-bottom:1px solid var(--linha)}
@@ -280,7 +301,7 @@ function fmtDur(ms) {
 }
 const pessoasTxt = n => n + ' ' + (Number(n) === 1 ? 'pessoa' : 'pessoas');
 
-let S = { versao: 1, registos: [], ativos: [], apagados: [] };
+let S = { versao: 1, registos: [], ativos: [], apagados: [], objetivos: {} };
 
 /* ---------- armazenamento no dispositivo (IndexedDB, com recurso a localStorage) ---------- */
 const DB = {
@@ -315,7 +336,7 @@ let pasta = null, pastaOk = false, tPasta = null;
 const temPasta = () => 'showDirectoryPicker' in window;
 
 function exportavel() {
-  return { app: 'cronometro-producao', versao: 1, exportado: new Date().toISOString(), registos: S.registos, apagados: S.apagados };
+  return { app: 'cronometro-producao', versao: 1, exportado: new Date().toISOString(), registos: S.registos, apagados: S.apagados, objetivos: S.objetivos };
 }
 function fundir(d) {
   if (!d || !Array.isArray(d.registos)) throw new Error('o ficheiro não tem registos desta app');
@@ -330,6 +351,10 @@ function fundir(d) {
   }
   S.apagados = [...ap];
   S.registos = [...m.values()].filter(r => !ap.has(r.id));
+  if (d.objetivos && typeof d.objetivos === 'object') for (const [k, o] of Object.entries(d.objetivos)) {
+    const loc = S.objetivos[k];
+    if (o && (!loc || (o.alterado || '') > (loc.alterado || ''))) S.objetivos[k] = o;
+  }
   return novos;
 }
 async function escreverPasta() {
@@ -560,10 +585,15 @@ function taxa(r) {
   return { u: r.unidade || 'kg', hora: r.quantidade / h, pessoaHora: r.quantidade / h / Math.max(1, r.pessoas || 1) };
 }
 const media = a => a.reduce((x, y) => x + y, 0) / a.length;
+const desvio = a => { const m = media(a); return Math.sqrt(a.reduce((s, x) => s + (x - m) ** 2, 0) / (a.length - 1)); };
+function unidadePrincipal(regs) {
+  const c = {}; for (const r of regs) { const t = taxa(r); if (t) c[t.u] = (c[t.u] || 0) + 1; }
+  return Object.keys(c).sort((a, b) => c[b] - c[a])[0] || null;
+}
 
-function grafico(vals, rotulos, fmt) {
+function grafico(vals, rotulos, fmt, objV) {
   const W = 640, H = 230, pl = 6, pr = 6, pt = 26, pb = 26, n = vals.length;
-  const max = Math.max(...vals) * 1.12 || 1, med = media(vals);
+  const max = Math.max(...vals, objV || 0) * 1.12 || 1, med = media(vals);
   const bw = (W - pl - pr) / n, barW = Math.max(3, Math.min(46, bw * 0.66));
   const y = v => H - pb - (v / max) * (H - pt - pb);
   let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Evolução das contagens, a última destacada">`;
@@ -575,6 +605,7 @@ function grafico(vals, rotulos, fmt) {
   const ym = y(med);
   s += `<line class="med" x1="${pl}" x2="${W - pr}" y1="${ym.toFixed(1)}" y2="${ym.toFixed(1)}"/>`;
   s += `<text x="${pl + 2}" y="${(ym - 6).toFixed(1)}">média ${esc(fmt(med))}</text>`;
+  if (objV) { const yo = y(objV); s += `<line class="objl" x1="${pl}" x2="${W - pr}" y1="${yo.toFixed(1)}" y2="${yo.toFixed(1)}"/><text class="objt" x="${W - pr - 2}" y="${(yo - 6).toFixed(1)}" text-anchor="end">objetivo ${esc(fmt(objV))}</text>`; }
   const xl = pl + (n - 1) * bw + bw / 2, vl = vals[n - 1];
   s += `<text class="vl" x="${Math.min(W - 30, Math.max(30, xl)).toFixed(1)}" y="${(y(vl) - 6).toFixed(1)}" text-anchor="middle">${esc(fmt(vl))}</text>`;
   return s + '</svg>';
@@ -616,23 +647,96 @@ function renderAnalise() {
       <div class="kpi"><span class="v">${ultT && ultT.u === u ? num(ultT.pessoaHora) : '—'}</span><span class="l">última ${u}/pessoa/hora</span></div></div>`;
   }
   const semQ = regs.filter(r => !taxa(r)).length;
-  if (!unidades.length) html += `<p class="nota">Sem quantidades registadas neste grupo: a comparação é só de tempo, e lotes de tamanho diferente não são comparáveis entre si.</p>`;
+  if (!unidades.length) html += `<p class="nota">Sem quantidades registadas neste grupo: a comparação é só de tempo, e lotes de tamanho diferente não são comparáveis entre si. Objetivo, estimativa e comparações precisam da quantidade.</p>`;
   else if (semQ) html += `<p class="nota">${semQ} de ${n} contagens sem quantidade ficam fora das médias de produtividade.</p>`;
 
+  const u0 = unidadePrincipal(regs);
+  const comT = u0 ? regs.map(r => ({ r, t: taxa(r) })).filter(x => x.t && x.t.u === u0) : [];
+  const ppAll = comT.map(x => x.t.pessoaHora);
+  const ob = S.objetivos[g.k], objV = ob && ob.unidade === u0 ? ob.valor : null;
+
+  // objetivo
+  if (u0) {
+    html += `<section class="sec"><h3>Objetivo</h3><div class="campo"><label for="in-obj">Meta em ${u0}/pessoa/hora (vazio para remover)</label><div class="qtd"><input id="in-obj" inputmode="decimal" autocomplete="off" placeholder="ex.: 40" value="${objV ? esc(String(objV).replace('.', ',')) : ''}"><button type="button" class="btn" data-a="obj" data-u="${u0}">Guardar</button></div></div>`;
+    if (objV) {
+      const pm = media(ppAll) / objV * 100, pu = ppAll[ppAll.length - 1] / objV * 100, at = ppAll.filter(v => v >= objV).length;
+      html += `<div class="kpis tres"><div class="kpi"><span class="v">${num(pm, 0)}%</span><span class="l">média do objetivo</span></div><div class="kpi"><span class="v">${num(pu, 0)}%</span><span class="l">última contagem</span></div><div class="kpi"><span class="v">${at}/${ppAll.length}</span><span class="l">no objetivo</span></div></div><div class="bar-obj" role="img" aria-label="Média a ${num(pm, 0)}% do objetivo"><i class="${pm >= 100 ? 'ok' : ''}" style="width:${Math.min(100, pm).toFixed(1)}%"></i></div>`;
+    } else html += '<p class="nota">Defina uma meta para ver o atingimento de cada contagem.</p>';
+    html += '</section>';
+  }
+
+  // consistência
+  if (n >= 2) {
+    const usaT = ppAll.length >= 2, vals = usaT ? ppAll : dur, cv = desvio(vals) / media(vals) * 100;
+    const [txt, cls] = cv < 10 ? ['Muito consistente', 'melhor'] : cv < 20 ? ['Consistente', 'melhor'] : cv < 35 ? ['Variável', 'medio'] : ['Muito variável', 'pior'];
+    const fmtV = usaT ? v => num(v) + ' ' + u0 + '/pessoa/hora' : fmtDur;
+    html += `<section class="sec"><h3>Consistência</h3><p class="frase"><span class="${cls}">${txt}</span>: variação típica de ±${num(cv, 0)}% em ${usaT ? u0 + '/pessoa/hora' : 'tempo'}, entre ${fmtV(Math.min(...vals))} e ${fmtV(Math.max(...vals))}.${vals.length < 4 ? ' Com tão poucas contagens, este indicador ainda é pouco fiável.' : ''}</p></section>`;
+  }
+
+  // tempo-padrão e estimativa
+  if (comT.length) {
+    ctxEst = { comT, u0, objV };
+    if (estPes == null) estPes = String(ult.pessoas || 1);
+    html += `<section class="sec"><h3>Tempo-padrão e estimativa</h3>
+      <p class="frase">Tempo-padrão: <strong>${fmtDur(100 / media(ppAll) * 3600000)}</strong> de trabalho de 1 pessoa por cada 100 ${u0}.</p>
+      <div class="duas"><div class="campo"><label for="est-qtd">Quantidade a produzir (${u0})</label><input id="est-qtd" inputmode="decimal" autocomplete="off" placeholder="ex.: 300" value="${esc(estQtd)}"></div>
+      <div class="campo"><label for="est-pes">Pessoas</label><input id="est-pes" inputmode="numeric" autocomplete="off" value="${esc(estPes)}"></div></div>
+      <div class="frase" id="est-res">${calcEstimativa()}</div></section>`;
+  } else ctxEst = null;
+
+  // por tamanho da equipa
+  if (comT.length) {
+    const por = {}; for (const x of comT) (por[x.r.pessoas] = por[x.r.pessoas] || []).push(x.t);
+    const ks = Object.keys(por).map(Number).sort((a, b) => a - b);
+    const lin = ks.map(k => ({ k, n: por[k].length, pp: media(por[k].map(t => t.pessoaHora)), h: media(por[k].map(t => t.hora)) }));
+    const mx = Math.max(...lin.map(l => l.pp));
+    html += `<section class="sec"><h3>Por tamanho da equipa</h3><ul class="rank">${lin.map(l => `<li class="${lin.length > 1 && l.pp === mx ? 'atual' : ''}"><span class="nome">${pessoasTxt(l.k)}<small>${l.n} ${l.n === 1 ? 'contagem' : 'contagens'}, ${num(l.h)} ${u0}/hora em equipa</small></span><span class="val">${num(l.pp)}<small> ${u0}/pessoa/h</small></span><span class="bar"><i style="width:${(l.pp / mx * 100).toFixed(1)}%"></i></span></li>`).join('')}</ul>${lin.length < 2 ? `<p class="nota">Todas as contagens foram feitas com ${pessoasTxt(ks[0])}. Meça com equipas de tamanho diferente para comparar.</p>` : ''}</section>`;
+  }
+
+  // produtos na mesma etapa
+  if (u0) {
+    const mesmaEtapa = gs.filter(x => norm(x.etapa) === norm(g.etapa)).map(x => {
+      const ts = x.regs.map(taxa).filter(t => t && t.u === u0), o = S.objetivos[x.k];
+      return { x, n: ts.length, pp: ts.length ? media(ts.map(t => t.pessoaHora)) : 0, o: o && o.unidade === u0 ? o.valor : null };
+    }).filter(l => l.n).sort((a, b) => b.pp - a.pp);
+    const mx = Math.max(...mesmaEtapa.map(l => l.pp));
+    html += `<section class="sec"><h3>Produtos na etapa ${esc(g.etapa)}</h3>` + (mesmaEtapa.length < 2
+      ? `<p class="nota">Ainda só há este produto medido nesta etapa com quantidade em ${u0}.</p>`
+      : `<ul class="rank">${mesmaEtapa.map((l, i) => `<li class="${l.x.k === g.k ? 'atual' : ''}"><span class="nome">${i + 1}. ${esc(l.x.produto)}<small>${l.n} ${l.n === 1 ? 'contagem' : 'contagens'}${l.o ? `, ${num(l.pp / l.o * 100, 0)}% do objetivo` : ''}</small></span><span class="val">${num(l.pp)}<small> ${u0}/pessoa/h</small></span><span class="bar"><i style="width:${(l.pp / mx * 100).toFixed(1)}%"></i></span></li>`).join('')}</ul>`) + '</section>';
+  }
+
+  // evolução
   if (n >= 2) {
     const opcoes = [['tempo', 'Tempo']].concat(unidades.map(u => ['pp-' + u, u + '/pessoa/hora']));
     if (!opcoes.some(o => o[0] === metrica)) metrica = 'tempo';
-    html += `<div class="seg" role="group" aria-label="Métrica do gráfico" id="seg-metrica">${opcoes.map(o => `<button type="button" data-m="${o[0]}" aria-pressed="${o[0] === metrica}">${esc(o[1])}</button>`).join('')}</div>`;
-    let vals, rot, fmt;
+    html += `<section class="sec"><h3>Evolução</h3><div class="seg" role="group" aria-label="Métrica do gráfico" id="seg-metrica">${opcoes.map(o => `<button type="button" data-m="${o[0]}" aria-pressed="${o[0] === metrica}">${esc(o[1])}</button>`).join('')}</div>`;
+    let vals, rot, fmt, linhaObj = null;
     if (metrica === 'tempo') { vals = regs.map(r => r.duracaoMs); rot = regs.map(r => fmtDia(r.dia).slice(0, 5)); fmt = fmtDur; }
-    else { const u = metrica.slice(3); const l = porU[u]; vals = l.map(x => x.t.pessoaHora); rot = l.map(x => fmtDia(x.r.dia).slice(0, 5)); fmt = v => num(v); }
-    if (vals.length >= 2) html += `<div class="grafico">${grafico(vals, rot, fmt)}</div>`;
+    else { const u = metrica.slice(3); const l = porU[u]; vals = l.map(x => x.t.pessoaHora); rot = l.map(x => fmtDia(x.r.dia).slice(0, 5)); fmt = v => num(v); if (u === u0) linhaObj = objV; }
+    if (vals.length >= 2) html += `<div class="grafico">${grafico(vals, rot, fmt, linhaObj)}</div>`;
+    html += '</section>';
   }
 
-  html += `<div class="tabela"><table><thead><tr><th>Dia</th><th>Lote</th><th class="n">Pessoas</th><th class="n">Quantidade</th><th class="n">Tempo</th><th class="n">por pessoa/hora</th></tr></thead><tbody>` +
-    [...regs].reverse().map(r => { const t = taxa(r); return `<tr><td>${fmtDia(r.dia)}</td><td>${esc(r.lote || '')}</td><td class="n">${r.pessoas}</td><td class="n">${r.quantidade ? num(r.quantidade, 2) + ' ' + r.unidade : ''}</td><td class="n">${fmtDur(r.duracaoMs)}</td><td class="n">${t ? num(t.pessoaHora) + ' ' + t.u : ''}</td></tr>`; }).join('') +
-    `</tbody></table></div>`;
+  html += `<section class="sec"><h3>Contagens</h3><div class="tabela"><table><thead><tr><th>Dia</th><th>Lote</th><th class="n">Pessoas</th><th class="n">Quantidade</th><th class="n">Tempo</th><th class="n">por pessoa/hora</th>${objV ? '<th class="n">% objetivo</th>' : ''}</tr></thead><tbody>` +
+    [...regs].reverse().map(r => { const t = taxa(r); return `<tr><td>${fmtDia(r.dia)}</td><td>${esc(r.lote || '')}</td><td class="n">${r.pessoas}</td><td class="n">${r.quantidade ? num(r.quantidade, 2) + ' ' + r.unidade : ''}</td><td class="n">${fmtDur(r.duracaoMs)}</td><td class="n">${t ? num(t.pessoaHora) + ' ' + t.u : ''}</td>${objV ? `<td class="n">${t && t.u === u0 ? `<span class="${t.pessoaHora >= objV ? 'melhor' : 'pior'}">${num(t.pessoaHora / objV * 100, 0)}%</span>` : ''}</td>` : ''}</tr>`; }).join('') +
+    `</tbody></table></div></section>`;
   el.innerHTML = html;
+}
+
+let ctxEst = null, estQtd = '', estPes = null;
+function calcEstimativa() {
+  const c = ctxEst; if (!c) return '';
+  const q = parseFloat(String(estQtd).replace(/\s/g, '').replace(',', '.')), p = parseInt(estPes, 10);
+  if (!(q > 0) || !(p >= 1)) return 'Indique a quantidade e o número de pessoas para estimar o tempo.';
+  const mesma = c.comT.filter(x => Number(x.r.pessoas) === p);
+  const pp = (mesma.length ? mesma : c.comT).map(x => x.t.pessoaHora);
+  const h = r => fmtDur(q / (r * p) * 3600000);
+  let t = `Para ${num(q, 2)} ${c.u0} com ${pessoasTxt(p)}: <strong>${h(media(pp))}</strong>`;
+  if (pp.length >= 2) t += ` (entre ${h(Math.max(...pp))} e ${h(Math.min(...pp))})`;
+  t += '.';
+  if (c.objV) t += ` Ao ritmo do objetivo: <strong>${h(c.objV)}</strong>.`;
+  t += `<span class="nota bloco-nota">${mesma.length ? (mesma.length === 1 ? `Com base na única contagem feita com ${pessoasTxt(p)}.` : `Com base nas ${mesma.length} contagens feitas com ${pessoasTxt(p)}.`) : `Não há contagens com ${pessoasTxt(p)}: usei a média de todas, assumindo que o rendimento por pessoa se mantém.`}</span>`;
+  return t;
 }
 
 /* ---------- formulário (novo / editar / parar) ---------- */
@@ -848,7 +952,7 @@ function construirExcel(registos) {
   }
   const m = new Map();
   for (const r of regs) { const k = grupoDe(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
-  const L2 = [cab(['Produto', 'Etapa', 'Contagens', 'Tempo médio', 'Mais rápida', 'Mais lenta', 'Unidade', 'Contagens com quantidade', 'Média Qtd/hora', 'Média Qtd/pessoa/hora', 'Melhor Qtd/pessoa/hora'])];
+  const L2 = [cab(['Produto', 'Etapa', 'Contagens', 'Tempo médio', 'Mais rápida', 'Mais lenta', 'Unidade', 'Contagens com quantidade', 'Média Qtd/hora', 'Média Qtd/pessoa/hora', 'Melhor Qtd/pessoa/hora', 'Objetivo Qtd/pessoa/hora', '% do objetivo (média)', 'Variação CV %', 'Tempo-padrão por 100 (1 pessoa)'])];
   for (const l of m.values()) {
     const u = l[l.length - 1], d = l.map(r => r.duracaoMs);
     const base = [u.produto, u.etapa, l.length, { v: media(d) / 86400000, s: ST.dur }, { v: Math.min(...d) / 86400000, s: ST.dur }, { v: Math.max(...d) / 86400000, s: ST.dur }];
@@ -856,11 +960,25 @@ function construirExcel(registos) {
     for (const r of l) { const t = taxa(r); if (t) (porU[t.u] = porU[t.u] || []).push(t); }
     const us = Object.keys(porU);
     if (!us.length) L2.push(base);
-    us.forEach(un => { const ts = porU[un]; L2.push([...base, un, ts.length, { v: r2(media(ts.map(t => t.hora))), s: ST.n2 }, { v: r2(media(ts.map(t => t.pessoaHora))), s: ST.n2 }, { v: r2(Math.max(...ts.map(t => t.pessoaHora))), s: ST.n2 }]); });
+    us.forEach(un => {
+      const ts = porU[un], pp = ts.map(t => t.pessoaHora), mp = media(pp), o = S.objetivos[grupoDe(u)], ov = o && o.unidade === un ? o.valor : null;
+      L2.push([...base, un, ts.length, { v: r2(media(ts.map(t => t.hora))), s: ST.n2 }, { v: r2(mp), s: ST.n2 }, { v: r2(Math.max(...pp)), s: ST.n2 },
+        ov ? { v: ov, s: ST.n2 } : '', ov ? { v: r2(mp / ov * 100), s: ST.n2 } : '', pp.length >= 2 ? { v: r2(desvio(pp) / mp * 100), s: ST.n2 } : '', { v: 100 / mp / 24, s: ST.dur }]);
+    });
+  }
+  const L3 = [cab(['Produto', 'Etapa', 'Pessoas', 'Unidade', 'Contagens', 'Média Qtd/hora', 'Média Qtd/pessoa/hora'])];
+  for (const l of m.values()) {
+    const u = l[l.length - 1], por = {};
+    for (const r of l) { const t = taxa(r); if (t) { const k = t.u + '|' + r.pessoas; (por[k] = por[k] || []).push(t); } }
+    Object.keys(por).sort((a, b) => a.split('|')[0].localeCompare(b.split('|')[0]) || Number(a.split('|')[1]) - Number(b.split('|')[1])).forEach(k => {
+      const [un, pe] = k.split('|'), ts = por[k];
+      L3.push([u.produto, u.etapa, Number(pe), un, ts.length, { v: r2(media(ts.map(t => t.hora))), s: ST.n2 }, { v: r2(media(ts.map(t => t.pessoaHora))), s: ST.n2 }]);
+    });
   }
   return livroXlsx([
     { nome: 'Registos', linhas: L1, larg: [11, 24, 22, 14, 9, 11, 8, 10, 9, 10, 15, 16, 16, 8, 16] },
-    { nome: 'Resumo', linhas: L2, larg: [24, 22, 10, 12, 12, 12, 8, 14, 14, 18, 18] }
+    { nome: 'Resumo', linhas: L2, larg: [24, 22, 10, 12, 12, 12, 8, 14, 14, 18, 18, 18, 16, 12, 18] },
+    { nome: 'Por equipa', linhas: L3, larg: [24, 22, 9, 8, 10, 14, 18] }
   ]);
 }
 // XLSX-FIM
@@ -892,7 +1010,23 @@ $('#lista-registos').addEventListener('click', e => {
   }
 });
 $('#analise').addEventListener('change', e => { if (e.target.id === 'sel-grupo') { grupoSel = e.target.value; renderAnalise(); } });
-$('#analise').addEventListener('click', e => { const b = e.target.closest('button[data-m]'); if (b) { metrica = b.dataset.m; renderAnalise(); } });
+$('#analise').addEventListener('click', e => {
+  const b = e.target.closest('button[data-m]'); if (b) { metrica = b.dataset.m; renderAnalise(); return; }
+  const o = e.target.closest('button[data-a="obj"]'); if (!o) return;
+  const txt = $('#in-obj').value.trim().replace(/\s/g, '').replace(',', '.');
+  if (!txt) { delete S.objetivos[grupoSel]; guardar(); renderAnalise(); toast('Objetivo removido'); return; }
+  const v = parseFloat(txt);
+  if (!(v > 0)) { toast('O objetivo tem de ser um número maior que zero.'); return; }
+  S.objetivos[grupoSel] = { valor: v, unidade: o.dataset.u, alterado: new Date().toISOString() };
+  guardar(); renderAnalise(); toast('Objetivo guardado');
+});
+$('#analise').addEventListener('input', e => {
+  if (e.target.id === 'est-qtd') estQtd = e.target.value;
+  else if (e.target.id === 'est-pes') estPes = e.target.value;
+  else return;
+  $('#est-res').innerHTML = calcEstimativa();
+});
+$('#analise').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'in-obj') { e.preventDefault(); $('#analise [data-a="obj"]').click(); } });
 
 let tToast = null;
 function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(tToast); tToast = setTimeout(() => { t.hidden = true; }, 3800); }
@@ -901,7 +1035,7 @@ function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; 
 (async () => {
   try { await DB.open(); } catch { DB.local = true; }
   try { const e = await DB.get('estado'); if (e) S = { ...S, ...e }; } catch { }
-  S.registos = S.registos || []; S.ativos = S.ativos || []; S.apagados = S.apagados || [];
+  S.registos = S.registos || []; S.ativos = S.ativos || []; S.apagados = S.apagados || []; S.objetivos = S.objetivos || {};
   render();
   setInterval(tick, 100);
   gerirWakeLock();
