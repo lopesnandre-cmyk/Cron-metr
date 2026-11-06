@@ -323,7 +323,10 @@ function fundir(d) {
   const m = new Map(S.registos.map(r => [r.id, r]));
   let novos = 0;
   for (const r of d.registos) {
-    if (r && r.id && typeof r.duracaoMs === 'number' && !m.has(r.id) && !ap.has(r.id)) { m.set(r.id, r); novos++; }
+    if (!r || !r.id || typeof r.duracaoMs !== 'number' || ap.has(r.id)) continue;
+    const loc = m.get(r.id);
+    if (!loc) { m.set(r.id, r); novos++; }
+    else if (r.alterado && (!loc.alterado || r.alterado > loc.alterado)) { m.set(r.id, r); novos++; }
   }
   S.apagados = [...ap];
   S.registos = [...m.values()].filter(r => !ap.has(r.id));
@@ -516,10 +519,10 @@ function renderRegistos() {
   if (!regs.length) { el.innerHTML = '<p class="vazio-txt">Ainda não há registos. Quando parar um cronómetro e guardar, a contagem aparece aqui.</p>'; return; }
   const dias = [...new Set(regs.map(r => r.dia))].sort().reverse();
   el.innerHTML = dias.map(d => `<h3 class="dia">${esc(fmtDiaLongo(d))}</h3><ul class="regs">${regs.filter(r => r.dia === d).map(r => {
-    const meta = [r.lote ? 'Lote ' + esc(r.lote) : '', pessoasTxt(r.pessoas), r.quantidade ? num(r.quantidade, 2) + ' ' + r.unidade : 'sem quantidade'].filter(Boolean).join(', ');
+    const meta = [r.lote ? 'Lote ' + esc(r.lote) : '', pessoasTxt(r.pessoas), r.quantidade ? num(r.quantidade, 2) + ' ' + r.unidade : 'sem quantidade', r.alterado ? 'editado' : ''].filter(Boolean).join(', ');
     return `<li data-id="${r.id}"><div class="r-info"><strong>${esc(r.produto)}</strong><span>${esc(r.etapa)}</span><span>${meta}</span></div>
       <div class="r-tempo">${fmtDur(r.duracaoMs)}</div>
-      <div class="r-acoes"><button class="txt" data-acao="repetir">Medir de novo</button><button class="txt" data-acao="apagar">Apagar</button></div></li>`;
+      <div class="r-acoes"><button class="txt" data-acao="editar">Editar</button><button class="txt" data-acao="repetir">Medir de novo</button><button class="txt" data-acao="apagar">Apagar</button></div></li>`;
   }).join('')}</ul>`).join('');
 }
 
@@ -643,14 +646,15 @@ function recentes() {
 }
 function abrirForm(modo, d = {}, extra = {}) {
   ctxForm = { modo, ...extra };
-  const titulo = { novo: 'Novo cronómetro', editar: 'Editar cronómetro', parar: 'Parar e guardar' }[modo];
+  const titulo = { novo: 'Novo cronómetro', editar: 'Editar cronómetro', parar: 'Parar e guardar', registo: 'Editar registo' }[modo];
   let topo = '';
   if (modo === 'parar') topo = `<div class="final"><span class="lbl">Tempo medido</span><div class="digits">${fmtDur(extra.ms)}<span class="dec">,${dec(extra.ms)}</span></div></div>`;
+  if (modo === 'registo') { ctxForm.durOrig = d.duracaoMs; topo = `<div class="campo"><label for="f-dur">Tempo medido (mm:ss ou h:mm:ss)</label><input id="f-dur" inputmode="numbers-and-punctuation" autocomplete="off" value="${fmtDur(d.duracaoMs)}"></div>`; }
   if (modo === 'novo') { const rec = recentes(); ctxForm.rec = rec; if (rec.length) topo = `<span class="lbl">Recentes</span><div class="chips">${rec.map((r, i) => `<button type="button" class="chip" data-i="${i}">${esc(r.produto)} / ${esc(r.etapa)}</button>`).join('')}</div>`; }
   const un = d.unidade || 'kg';
   let botoes;
   if (modo === 'novo') botoes = `<div class="acoes-form duas-col"><button type="button" class="btn" data-f="fechar">Cancelar</button><button type="button" class="btn pri" data-f="ok">Iniciar</button></div>`;
-  else if (modo === 'editar') botoes = `<div class="acoes-form duas-col"><button type="button" class="btn" data-f="fechar">Cancelar</button><button type="button" class="btn pri" data-f="ok">Guardar alterações</button></div>`;
+  else if (modo === 'editar' || modo === 'registo') botoes = `<div class="acoes-form duas-col"><button type="button" class="btn" data-f="fechar">Cancelar</button><button type="button" class="btn pri" data-f="ok">Guardar alterações</button></div>`;
   else botoes = `<div class="acoes-form"><button type="button" class="btn pri largo" data-f="ok">Guardar registo</button><div class="acoes-form duas-col"><button type="button" class="btn" data-f="fechar">Continuar a contar</button><button type="button" class="btn perigo" data-f="descartar">Descartar contagem</button></div></div>`;
 
   $('#form-corpo').innerHTML = `<h2>${titulo}</h2>${topo}
@@ -661,7 +665,7 @@ function abrirForm(modo, d = {}, extra = {}) {
       <div class="campo"><label for="f-pessoas">Pessoas</label><div class="stepper"><button type="button" data-step="-1" aria-label="Menos uma pessoa">−</button><input id="f-pessoas" inputmode="numeric" value="${esc(d.pessoas || 1)}"><button type="button" data-step="1" aria-label="Mais uma pessoa">+</button></div></div>
       <div class="campo"><label for="f-dia">Dia</label><input id="f-dia" type="date" value="${esc(d.dia || hoje())}"></div>
     </div>
-    <div class="campo"><label for="f-qtd">Quantidade produzida${modo === 'parar' ? '' : ' (pode ficar para o fim)'}</label>
+    <div class="campo"><label for="f-qtd">Quantidade produzida${modo === 'novo' || modo === 'editar' ? ' (pode ficar para o fim)' : ''}</label>
       <div class="qtd"><input id="f-qtd" inputmode="decimal" autocomplete="off" value="${d.quantidade != null && d.quantidade !== '' ? esc(String(d.quantidade).replace('.', ',')) : ''}">
       <div class="seg" role="group" aria-label="Unidade"><button type="button" data-un="kg" aria-pressed="${un === 'kg'}">kg</button><button type="button" data-un="un" aria-pressed="${un === 'un'}">un</button></div></div></div>
     <p class="erro" id="f-erro" hidden></p>${botoes}`;
@@ -683,7 +687,20 @@ function lerForm() {
   let quantidade = null;
   if (qt) { quantidade = parseFloat(qt); if (!(quantidade > 0)) return erro('A quantidade tem de ser um número maior que zero.'); }
   const unidade = $('#form-corpo .seg button[aria-pressed="true"]').dataset.un;
-  return { produto, etapa, lote: v('f-lote'), pessoas, dia, quantidade, unidade };
+  const out = { produto, etapa, lote: v('f-lote'), pessoas, dia, quantidade, unidade };
+  if ($('#f-dur')) {
+    const txt = v('f-dur');
+    if (txt === fmtDur(ctxForm.durOrig)) out.duracaoMs = ctxForm.durOrig;
+    else {
+      const pt = txt.split(':').map(x => x.trim());
+      if (pt.length < 2 || pt.length > 3 || pt.some(x => !/^\d+$/.test(x))) return erro('Escreva o tempo como mm:ss ou h:mm:ss (ex.: 12:30 ou 1:05:00).');
+      const [h, m, sg] = pt.length === 3 ? pt.map(Number) : [0, ...pt.map(Number)];
+      if (sg > 59 || (pt.length === 3 && m > 59)) return erro('Minutos e segundos vão de 0 a 59.');
+      out.duracaoMs = ((h * 60 + m) * 60 + sg) * 1000;
+      if (!(out.duracaoMs > 0)) return erro('O tempo tem de ser maior que zero.');
+    }
+  }
+  return out;
 }
 $('#form-corpo').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -704,6 +721,12 @@ $('#form-corpo').addEventListener('click', e => {
   if (b.dataset.f === 'ok') {
     const f = lerForm(); if (!f) return;
     if (ctxForm.modo === 'novo') { iniciar(f); mostrar('crono'); }
+    else if (ctxForm.modo === 'registo') {
+      const r = S.registos.find(x => x.id === ctxForm.id);
+      if (!r) { dlg.close(); toast('Este registo já não existe.'); return; }
+      Object.assign(r, f, { alterado: new Date().toISOString() });
+      guardar(); render(); toast('Registo atualizado');
+    }
     else {
       const t = S.ativos.find(x => x.id === ctxForm.id);
       if (!t) { dlg.close(); toast('Este cronómetro já não existe.'); return; }
@@ -815,13 +838,13 @@ const r2 = v => Math.round(v * 100) / 100;
 function construirExcel(registos) {
   const cab = a => a.map(v => ({ v, s: ST.cab }));
   const regs = [...registos].sort((a, b) => a.fim.localeCompare(b.fim));
-  const L1 = [cab(['Dia', 'Produto', 'Etapa', 'Lote', 'Pessoas', 'Quantidade', 'Unidade', 'Duração', 'Minutos', 'Qtd/hora', 'Qtd/pessoa/hora', 'Início', 'Fim', 'Pausas'])];
+  const L1 = [cab(['Dia', 'Produto', 'Etapa', 'Lote', 'Pessoas', 'Quantidade', 'Unidade', 'Duração', 'Minutos', 'Qtd/hora', 'Qtd/pessoa/hora', 'Início', 'Fim', 'Pausas', 'Editado em'])];
   for (const r of regs) {
     const t = taxa(r);
     L1.push([{ v: serialDia(r.dia), s: ST.data }, r.produto, r.etapa, r.lote || '', r.pessoas, r.quantidade != null ? { v: r.quantidade, s: ST.n2 } : '', r.quantidade != null ? r.unidade : '',
       { v: r.duracaoMs / 86400000, s: ST.dur }, { v: r2(r.duracaoMs / 60000), s: ST.n2 },
       t ? { v: r2(t.hora), s: ST.n2 } : '', t ? { v: r2(t.pessoaHora), s: ST.n2 } : '',
-      { v: serialDH(r.inicio), s: ST.dh }, { v: serialDH(r.fim), s: ST.dh }, r.pausas || 0]);
+      { v: serialDH(r.inicio), s: ST.dh }, { v: serialDH(r.fim), s: ST.dh }, r.pausas || 0, r.alterado ? { v: serialDH(r.alterado), s: ST.dh } : '']);
   }
   const m = new Map();
   for (const r of regs) { const k = grupoDe(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
@@ -836,7 +859,7 @@ function construirExcel(registos) {
     us.forEach(un => { const ts = porU[un]; L2.push([...base, un, ts.length, { v: r2(media(ts.map(t => t.hora))), s: ST.n2 }, { v: r2(media(ts.map(t => t.pessoaHora))), s: ST.n2 }, { v: r2(Math.max(...ts.map(t => t.pessoaHora))), s: ST.n2 }]); });
   }
   return livroXlsx([
-    { nome: 'Registos', linhas: L1, larg: [11, 24, 22, 14, 9, 11, 8, 10, 9, 10, 15, 16, 16, 8] },
+    { nome: 'Registos', linhas: L1, larg: [11, 24, 22, 14, 9, 11, 8, 10, 9, 10, 15, 16, 16, 8, 16] },
     { nome: 'Resumo', linhas: L2, larg: [24, 22, 10, 12, 12, 12, 8, 14, 14, 18, 18] }
   ]);
 }
@@ -861,6 +884,7 @@ $('#lista-crono').addEventListener('click', e => {
 $('#lista-registos').addEventListener('click', e => {
   const b = e.target.closest('button[data-acao]'); if (!b) return;
   const r = S.registos.find(x => x.id === b.closest('li').dataset.id); if (!r) return;
+  if (b.dataset.acao === 'editar') abrirForm('registo', r, { id: r.id });
   if (b.dataset.acao === 'repetir') { mostrar('crono'); abrirForm('novo', { produto: r.produto, etapa: r.etapa, pessoas: r.pessoas, unidade: r.unidade, lote: r.lote }); }
   if (b.dataset.acao === 'apagar') {
     if (!confirm(`Apagar o registo de ${r.produto} / ${r.etapa} (${fmtDur(r.duracaoMs)})?`)) return;
